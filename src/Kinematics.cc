@@ -16,8 +16,6 @@
 #include "rbdl/Model.h"
 #include "rbdl/Kinematics.h"
 
-#include <ctime>
-
 namespace RigidBodyDynamics {
 
 using namespace Math;

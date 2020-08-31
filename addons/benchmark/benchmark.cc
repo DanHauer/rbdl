@@ -550,7 +550,7 @@ double run_single_inverse_kinematics_benchmark2(Model *model, std::vector<Invers
   timer_start (&tinfo);
   VectorNd qinit = VectorNd::Zero(model->dof_count);
   VectorNd qres = VectorNd::Zero(model->dof_count);
-  VectorNd failures = VectorNd::Zero(model->dof_count);
+  VectorNd failures = VectorNd::Zero(sample_count);
 
   for (int i = 0; i < sample_count; i++) {
     if (!InverseKinematics(*model, qinit, CS[i].body_ids, CS[i].body_points, CS[i].target_positions, qres)){
