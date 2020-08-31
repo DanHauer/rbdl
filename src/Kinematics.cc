@@ -16,6 +16,8 @@
 #include "rbdl/Model.h"
 #include "rbdl/Kinematics.h"
 
+#include <ctime>
+
 namespace RigidBodyDynamics {
 
 using namespace Math;
@@ -619,7 +621,7 @@ RBDL_DLLAPI bool InverseKinematics (
   Qres = Qinit;
 
   for (unsigned int ik_iter = 0; ik_iter < max_iter; ik_iter++) {
-    UpdateKinematicsCustom (model, &Qres, NULL, NULL);
+    UpdateKinematicsCustom (model, &Qres, NULL, NULL);  
 
     for (unsigned int k = 0; k < body_id.size(); k++) {
       MatrixNd G (MatrixNd::Zero(3, model.qdot_size));
@@ -645,10 +647,9 @@ RBDL_DLLAPI bool InverseKinematics (
 
     // abort if we are getting "close"
     if (e.norm() < step_tol) {
-      LOG << "Reached target close enough after " << ik_iter << " steps" << std::endl;
+      LOG << "Reached target close enough after " << ik_iter << " steps" << std::endl; 
       return true;
     }
-
     MatrixNd JJTe_lambda2_I =
       J * J.transpose()
       + lambda*lambda * MatrixNd::Identity(e.size(), e.size());
@@ -665,7 +666,7 @@ RBDL_DLLAPI bool InverseKinematics (
     LOG << "Qres = " << Qres.transpose() << std::endl;
 
     if (delta_theta.norm() < step_tol) {
-      LOG << "reached convergence after " << ik_iter << " steps" << std::endl;
+      LOG << "reached convergence after " << ik_iter << " steps" << std::endl;  
       return true;
     }
 
@@ -782,7 +783,6 @@ unsigned int InverseKinematicsConstraintSet::ClearConstraints()
   return constraint_type.size();
 }
 
-
 RBDL_DLLAPI
 bool InverseKinematics (
     Model &model,
@@ -798,18 +798,22 @@ bool InverseKinematics (
 
   Qres = Qinit;
 
+  bool full_constraint_present = false;
+
   for (CS.num_steps = 0; CS.num_steps < CS.max_steps; CS.num_steps++) {
     UpdateKinematicsCustom (model, &Qres, NULL, NULL);
-
+  
+    full_constraint_present = false;
     for (unsigned int k = 0; k < CS.body_ids.size(); k++) {
       CS.G = MatrixNd::Zero(6, model.qdot_size);
       CalcPointJacobian6D (model, Qres, CS.body_ids[k], CS.body_points[k], CS.G, false);
-      Vector3d point_base = CalcBodyToBaseCoordinates (model, Qres, CS.body_ids[k], CS.body_points[k], false);
       Matrix3d R = CalcBodyWorldOrientation(model, Qres, CS.body_ids[k], false);
       Vector3d angular_velocity = R.transpose()*CalcAngularVelocityfromMatrix(R*CS.target_orientations[k].transpose());
+      Vector3d point_base = CalcBodyToBaseCoordinates (model, Qres, CS.body_ids[k], CS.body_points[k], false);
 
       //assign offsets and Jacobians
       if (CS.constraint_type[k] == InverseKinematicsConstraintSet::ConstraintTypeFull){
+        full_constraint_present = true;
         for (unsigned int i = 0; i < 3; i++){
           unsigned int row = CS.constraint_row_index[k] + i;
           CS.e[row + 3] = CS.target_positions[k][i] - point_base[i];
@@ -870,26 +874,41 @@ bool InverseKinematics (
 
     // "joint space" from puppeteer
 
-    double Ek = 0.;
+    //  double Ek = 0.;
 
-    for (unsigned int ei = 0; ei < CS.e.size(); ei ++) {
-      Ek += CS.e[ei] * CS.e[ei] * 0.5;
+    //  for (size_t ei = 0; ei < CS.e.size(); ei ++) {
+    //    Ek += CS.e[ei] * CS.e[ei] * 0.5;
+    //  }
+    VectorNd delta_theta;
+
+    if (full_constraint_present) {  
+
+      VectorNd ek = CS.J.transpose() * CS.e;
+      MatrixNd Wn = MatrixNd::Zero (Qres.size(), Qres.size());
+
+      assert (ek.size() == Qres.size());
+
+      for (size_t wi = 0; wi < Qres.size(); wi++) {
+        Wn(wi, wi) = ek[wi] * ek[wi] * 0.5 + CS.lambda;
+      }
+
+      MatrixNd A = CS.J.transpose() * CS.J + Wn;
+      delta_theta = A.colPivHouseholderQr().solve(CS.J.transpose() * CS.e);
+    } else {
+      MatrixNd A_ = CS.J * CS.J.transpose() ;
+
+      assert(A_.rows() == CS.e.size() && A_.cols() == CS.e.size());
+      
+      for (unsigned int wi = 0; wi < CS.e.size(); wi++) {
+        A_(wi, wi) += CS.e[wi] * CS.e[wi] * 0.5 + CS.lambda;
+      }
+
+      VectorNd z = A_.colPivHouseholderQr().solve(CS.e);
+      delta_theta = CS.J.transpose() * z;
     }
-
-    VectorNd ek = CS.J.transpose() * CS.e;
-    MatrixNd Wn = MatrixNd::Zero (Qres.size(), Qres.size());
-
-    assert (ek.size() == Qres.size());
-
-    for (unsigned int wi = 0; wi < Qres.size(); wi++) {
-      Wn(wi, wi) = ek[wi] * ek[wi] * 0.5 + CS.lambda;
-      //      Wn(wi, wi) = Ek + 1.0e-3;
-    }
-
-    MatrixNd A = CS.J.transpose() * CS.J + Wn;
-    VectorNd delta_theta = A.colPivHouseholderQr().solve(CS.J.transpose() * CS.e);
 
     Qres = Qres + delta_theta;
+    
     if (delta_theta.norm() < CS.step_tol) {
       LOG << "reached convergence after " << CS.num_steps << " steps" << std::endl;
       return true;

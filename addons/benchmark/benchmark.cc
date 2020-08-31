@@ -43,7 +43,7 @@ bool benchmark_run_crba = true;
 bool benchmark_run_nle = true;
 bool benchmark_run_calc_minv_times_tau = true;
 bool benchmark_run_contacts = false;
-bool benchmark_run_ik = false;
+bool benchmark_run_ik = true;
 
 bool json_output = false;
 
@@ -143,7 +143,7 @@ string get_utc_time_string () {
   timeinfo = gmtime(&current_time);
   char time_buf[80];
   std::size_t UNUSED(time_len) = strftime(&time_buf[0], 80, "%a %b %d %T %Y", timeinfo);
-  assert(time_len <= 80 & "violating buffer size for utc time conversion");
+  //assert(time_len <= 80 & "violating buffer size for utc time conversion");
   return time_buf;
 }
 double run_forward_dynamics_ABA_benchmark (Model *model, int sample_count) {
@@ -532,7 +532,7 @@ double run_single_inverse_kinematics_benchmark(Model *model, std::vector<Inverse
   timer_start (&tinfo);
   VectorNd qinit = VectorNd::Zero(model->dof_count);
   VectorNd qres = VectorNd::Zero(model->dof_count);
-  VectorNd failures = VectorNd::Zero(model->dof_count);
+  VectorNd failures = VectorNd::Zero(sample_count);
 
   for (int i = 0; i < sample_count; i++) {
     if (!InverseKinematics(*model, qinit, CS[i], qres)){
@@ -543,6 +543,23 @@ double run_single_inverse_kinematics_benchmark(Model *model, std::vector<Inverse
   std::cout << "Success Rate: " << (1-failures.mean())*100 << "%  for: ";
   return duration;
   
+}
+
+double run_single_inverse_kinematics_benchmark2(Model *model, std::vector<InverseKinematicsConstraintSet> &CS, int sample_count){
+  TimerInfo tinfo;
+  timer_start (&tinfo);
+  VectorNd qinit = VectorNd::Zero(model->dof_count);
+  VectorNd qres = VectorNd::Zero(model->dof_count);
+  VectorNd failures = VectorNd::Zero(model->dof_count);
+
+  for (int i = 0; i < sample_count; i++) {
+    if (!InverseKinematics(*model, qinit, CS[i].body_ids, CS[i].body_points, CS[i].target_positions, qres)){
+      failures[i] = 1;
+    }
+  }
+  double duration = timer_stop (&tinfo);
+  std::cout << "old_Success Rate: " << (1-failures.mean())*100 << "%  for: ";
+  return duration;
 }
 
 double run_all_inverse_kinematics_benchmark (unsigned int sample_count){
@@ -569,6 +586,7 @@ double run_all_inverse_kinematics_benchmark (unsigned int sample_count){
   
   //create constraint sets
   std::vector<InverseKinematicsConstraintSet> cs_one_point;
+  std::vector<InverseKinematicsConstraintSet> cs_two_points;
   std::vector<InverseKinematicsConstraintSet> cs_two_point_one_orientation;
   std::vector<InverseKinematicsConstraintSet> cs_two_full_one_point;
   std::vector<InverseKinematicsConstraintSet> cs_two_full_two_point_one_orientation;
@@ -593,9 +611,16 @@ double run_all_inverse_kinematics_benchmark (unsigned int sample_count){
     one_point.step_tol = 1e-12;
     cs_one_point.push_back(one_point);
 
+    //two points
+    InverseKinematicsConstraintSet two_points;
+    two_points.AddPointConstraint(foot_l, foot_l_point, foot_l_position);
+    two_points.AddPointConstraint(foot_r, foot_r_point, foot_r_position);
+    two_points.step_tol = 1e-12;
+    cs_two_points.push_back(two_points);
+
     //two point and one orientation
     InverseKinematicsConstraintSet two_point_one_orientation;
-    two_point_one_orientation.AddPointConstraint(foot_l,foot_l_point, foot_l_position);
+    two_point_one_orientation.AddPointConstraint(foot_l, foot_l_point, foot_l_position);
     two_point_one_orientation.AddPointConstraint(foot_r, foot_r_point, foot_r_position);
     two_point_one_orientation.AddOrientationConstraint(head, head_orientation);
     two_point_one_orientation.step_tol = 1e-12;
@@ -639,6 +664,21 @@ double run_all_inverse_kinematics_benchmark (unsigned int sample_count){
   << " duration = " << setw(10) << duration << "(s)"
   << " (~" << setw(10) << duration / sample_count << "(s) per call)" << endl;
   
+  duration = run_single_inverse_kinematics_benchmark2(model, cs_one_point, sample_count);
+  cout << "Constraints: 1 Body:   1 Point                     : "
+  << " duration = " << setw(10) << duration << "(s)"
+  << " (~" << setw(10) << duration / sample_count << "(s) per call)" << endl;
+  
+  duration = run_single_inverse_kinematics_benchmark(model, cs_two_points, sample_count);
+  cout << "Constraints: 2 Bodies:   2 Points                   : "
+  << " duration = " << setw(10) << duration << "(s)"
+  << " (~" << setw(10) << duration / sample_count << "(s) per call)" << endl;
+  
+  duration = run_single_inverse_kinematics_benchmark2(model, cs_two_points, sample_count);
+  cout << "Constraints: 2 Bodies:   2 Points                  : "
+  << " duration = " << setw(10) << duration << "(s)"
+  << " (~" << setw(10) << duration / sample_count << "(s) per call)" << endl;
+
   duration = run_single_inverse_kinematics_benchmark(model, cs_two_point_one_orientation, sample_count);
   cout << "Constraints: 3 Bodies: 2 Points 1 Orienation        : "
   << " duration = " << setw(10) << duration << "(s)"
@@ -648,16 +688,16 @@ double run_all_inverse_kinematics_benchmark (unsigned int sample_count){
   cout << "Constraints: 3 Bodies: 2 Full 1 Point               : "
   << " duration = " << setw(10) << duration << "(s)"
   << " (~" << setw(10) << duration / sample_count << "(s) per call)" << endl;
-  
+ 
   duration = run_single_inverse_kinematics_benchmark(model, cs_two_full_two_point_one_orientation, sample_count);  
   cout << "Constraints: 5 Bodies: 2 Full 2 Points 1 Orienation : "
   << " duration = " << setw(10) << duration << "(s)"
   << " (~" << setw(10) << duration / sample_count << "(s) per call)" << endl;
-  
+   
   duration = run_single_inverse_kinematics_benchmark(model, cs_five_full, sample_count);  
   cout << "Constraints: 5 Bodies: 5 Full                       : "
   << " duration = " << setw(10) << duration << "(s)"
-  << " (~" << setw(10) << duration / sample_count << "(s) per call)" << endl;
+  << " (~" << setw(10) << duration / sample_count << "(s) per call)" << endl; 
   return duration;
 }
 
